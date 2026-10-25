@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+
+# Secrets & local config — never commit
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+!debug.keystore
+*.p8
+*.p12
+*.pem
+google-services.json
+
+# Local databases and exports
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+daily-spend-*.csv
+daily-spend-*.json
+
+# Generated native projects (Expo prebuild) and build output
+mobile/android/
+mobile/ios/
+**/build/
+mobile/.expo/
+mobile/dist/
+.pytest_cache/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
