@@ -22,12 +22,12 @@ def normalise_mobile(value: str) -> str:
     Indian mobile numbers in any common format → E.164 (+91XXXXXXXXXX).
     Accepts "98765 43210", "+91-98765-43210", "098765 43210", "919876543210".
     """
-    digits = re.sub(r"D", "", value)
+    digits = re.sub(r"\D", "", value)
     if len(digits) == 12 and digits.startswith("91"):
         digits = digits[2:]
     elif len(digits) == 11 and digits.startswith("0"):
         digits = digits[1:]
-    if not re.fullmatch(r"[6-9]d{9}", digits):
+    if not re.fullmatch(r"[6-9]\d{9}", digits):
         raise ValueError("Enter a valid 10-digit Indian mobile number.")
     return "+91" + digits
 

@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +18,15 @@ class Settings(BaseSettings):
     cors_origins: list[str] = []
     log_level: str = "INFO"
     sync_max_batch: int = 2000
+
+    @field_validator("database_url")
+    @classmethod
+    def _use_psycopg3(cls, v: str) -> str:
+        """Hosts like Render hand out postgres:// or postgresql:// URLs; this app uses the psycopg (v3) driver."""
+        for prefix in ("postgres://", "postgresql://"):
+            if v.startswith(prefix):
+                return "postgresql+psycopg://" + v[len(prefix) :]
+        return v
 
     def validate_for_runtime(self) -> None:
         if len(self.jwt_secret) < 32:
