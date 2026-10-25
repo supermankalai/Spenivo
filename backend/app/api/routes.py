@@ -1,5 +1,6 @@
 import time
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
@@ -8,14 +9,27 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.config import get_settings
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.security import (
+    create_access_token,
+    generate_recovery_code,
+    hash_password,
+    hash_recovery_code,
+    verify_password,
+    verify_recovery_code,
+)
 from app.models import Budget, Category, Transaction, User
 from app.schemas import (
     BudgetIn,
     BudgetOut,
     CategoryTotalOut,
+    ChangePasswordIn,
+    ConfirmPasswordIn,
     Credentials,
     LoginRequest,
+    RecoveryCodeOut,
+    RegisterOut,
+    ResetPasswordIn,
+    ResetPasswordOut,
     SummaryOut,
     SyncRequest,
     SyncResponse,
@@ -24,14 +38,13 @@ from app.schemas import (
     TransactionOut,
     TransactionPage,
     TransactionUpdate,
-    UserOut,
 )
 from app.services import insights
 from app.services.sync import apply_sync, lock_user, next_version
 
 router = APIRouter(prefix="/api/v1")
 
-# Precomputed so failed logins for unknown emails take as long as wrong passwords.
+# Precomputed so failed logins for unknown numbers take as long as wrong passwords.
 _DUMMY_HASH = hash_password("timing-equaliser-not-a-real-password")
 
 
@@ -42,24 +55,71 @@ def _now_ms() -> int:
 # --- auth -----------------------------------------------------------------
 
 
-@router.post("/auth/register", response_model=UserOut, status_code=status.HTTP_201_CREATED, tags=["auth"])
-def register(body: Credentials, db: DbSession) -> UserOut:
-    user = User(email=body.email, password_hash=hash_password(body.password))
+@router.post("/auth/register", response_model=RegisterOut, status_code=status.HTTP_201_CREATED, tags=["auth"])
+def register(body: Credentials, db: DbSession) -> RegisterOut:
+    code = generate_recovery_code()
+    user = User(
+        mobile=body.mobile, password_hash=hash_password(body.password), recovery_code_hash=hash_recovery_code(code)
+    )
     db.add(user)
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists.") from None
-    return UserOut(id=user.id, email=user.email)
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "An account with this mobile number already exists. Log in instead."
+        ) from None
+    return RegisterOut(id=user.id, mobile=user.mobile, recovery_code=code)
+
+
+def _set_password(user: User, password: str) -> None:
+    user.password_hash = hash_password(password)
+    # Tokens issued before now stop working: other devices are signed out.
+    user.password_changed_at = datetime.now(UTC).replace(microsecond=0)
+
+
+@router.post("/auth/reset-password", response_model=ResetPasswordOut, tags=["auth"])
+def reset_password(body: ResetPasswordIn, db: DbSession) -> ResetPasswordOut:
+    """Forgot password: mobile number + recovery code → new password. The code is single-use."""
+    user = db.execute(select(User).where(User.mobile == body.mobile)).scalar_one_or_none()
+    code_hash = user.recovery_code_hash if user is not None and user.recovery_code_hash else _DUMMY_HASH
+    valid = verify_recovery_code(body.recovery_code, code_hash)
+    if user is None or user.recovery_code_hash is None or not valid:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That mobile number and recovery code don’t match.")
+    _set_password(user, body.new_password)
+    new_code = generate_recovery_code()
+    user.recovery_code_hash = hash_recovery_code(new_code)
+    db.commit()
+    return ResetPasswordOut(access_token=create_access_token(user.id), recovery_code=new_code)
+
+
+@router.post("/auth/change-password", response_model=TokenOut, tags=["auth"])
+def change_password(body: ChangePasswordIn, user: CurrentUser, db: DbSession) -> TokenOut:
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Your current password is not right.")
+    _set_password(user, body.new_password)
+    db.commit()
+    # This device stays signed in with a fresh token.
+    return TokenOut(access_token=create_access_token(user.id))
+
+
+@router.post("/auth/recovery-code", response_model=RecoveryCodeOut, tags=["auth"])
+def new_recovery_code(body: ConfirmPasswordIn, user: CurrentUser, db: DbSession) -> RecoveryCodeOut:
+    """Issue a new recovery code (the old one stops working). Needs the password, not just a token."""
+    if not verify_password(body.password, user.password_hash):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Your password is not right.")
+    code = generate_recovery_code()
+    user.recovery_code_hash = hash_recovery_code(code)
+    db.commit()
+    return RecoveryCodeOut(recovery_code=code)
 
 
 @router.post("/auth/login", response_model=TokenOut, tags=["auth"])
 def login(body: LoginRequest, db: DbSession) -> TokenOut:
-    user = db.execute(select(User).where(User.email == body.email.strip().lower())).scalar_one_or_none()
+    user = db.execute(select(User).where(User.mobile == body.mobile)).scalar_one_or_none()
     valid = verify_password(body.password, user.password_hash if user else _DUMMY_HASH)
     if user is None or not valid:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect email or password.")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect mobile number or password.")
     return TokenOut(access_token=create_access_token(user.id))
 
 

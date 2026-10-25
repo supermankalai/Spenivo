@@ -5,12 +5,12 @@
 ```
 ┌──────────────────────────── Android phone ────────────────────────────┐
 │                                                                        │
-│  Payment app notification                                              │
+│  Bank SMS alert shown by the SMS app (e.g. Google Messages)           │
 │        │ (only after user grants Notification Access)                  │
 │        ▼                                                               │
 │  UpiNotificationListenerService (Kotlin)                               │
 │   1. tracking enabled?  package in allowlist?  (else return, unread)   │
-│   2. NotificationProcessor → ParserRegistry → Generic/PhonePe/… parser │
+│   2. NotificationProcessor → ParserRegistry → BankSms / generic parser │
 │   3. repost suppression (SHA-256 of content, 2 min window)             │
 │   4. InboxStore.insert(parsed fields only)  ── raw text discarded      │
 │        │                                                               │
@@ -83,6 +83,15 @@ Native parser output → JS decision:
 - failed / declined / cancelled / incoming / requests / OTP / promotional / no amount → **dropped natively**, never stored
 - explicit success wording + amount + (payee or reference), single amount → confidence ≥ 0.85 → **confirmed**
 - pending/processing wording, no explicit success, several amounts, or missing payee and reference → **pending_review**
+
+## Budgets, alerts and reminders
+
+- **Budgets:** monthly (`settings.monthlyBudgetMinor`), usual daily (`settings.dailyBudgetMinor`) and per-day overrides (`daily_budgets`, set by the morning prompt).
+- **Levels:** 50, 80, 90, 100 and "over" (110), computed with integer maths. For each period, only the highest *newly* crossed level alerts; 100% (or jumping straight past it) is the single audible alert on channel `budget-limit`; the others are silent heads-up alerts on `budget-progress`.
+- **Two evaluators, one state:** `evaluateBudgets` (JS) runs after every data change using exact totals. `BudgetLogic.kt` runs in the listener service for bank-SMS payments recorded while the app is closed, adding the payment to the last totals the app shared. Both read and write the same alert state (native SharedPreferences, via `getAlertState` / `setAlertState`), so a level never alerts twice. The app overwrites the state with exact totals whenever it runs.
+- **Over budget:** red Today card and banner until a reason is saved in `budget_overruns` (one per day/month). Saving an expense that goes over opens the reason screen immediately; the "over" notification deep-links to it.
+- **Reminders (expo-notifications):** daily morning plan → `/budget?scope=day&prompt=1`, daily evening cash check → `/expense`, monthly on the 1st at 09:00 → `/budget?scope=month&prompt=1`. Fixed identifiers make rescheduling idempotent; they survive reboot. Delivery is best-effort (no exact-alarm permission).
+- **Payment recorded:** the listener posts a quiet notification for each detected payment (needs-review / transfer / recorded).
 
 ## Native module (`modules/upi-notifications`)
 

@@ -15,11 +15,11 @@ Daily Spend handles financial information, so it collects as little as possible 
 ## Notification access (optional, off by default)
 
 - The user must turn it on in Daily Spend **and** grant Notification Access in Android Settings. The app explains what happens before it opens Android Settings.
-- The service ignores every notification whose package is not in the user's allowlist **before reading its content**.
+- The service ignores every notification whose package is not in the watch list (by default only SMS apps) **before reading its content**. From SMS apps, only messages that look like bank debit alerts are used; personal chats are dropped without being stored. No SMS permission is requested, so the app cannot read the SMS inbox.
 - For allowed apps, title and text are held **in memory only** while parsing. Kept fields: amount, payee name, transaction reference, posting time, parser id, confidence. The text itself is never written to disk, logs, or the network.
 - Ignored entirely: OTP / password / "do not share" messages, chats, payment requests and reminders, offers and cashback promotions, failed / declined / cancelled payments, money received, refunds.
 - Logs contain reason codes only (e.g. `Ignored notification: FAILED`), and only when debug logging is enabled for the tag.
-- The app does **not** use an Accessibility Service, does **not** read SMS, and does not try to bypass Android's permission flow.
+- The app does **not** use an Accessibility Service, does **not** request the SMS permission (it only sees SMS that the SMS app shows as notifications, and cannot read the inbox or past messages), and does not try to bypass Android's permission flow.
 - Turning tracking off in the app stops recording immediately; revoking access in Android Settings stops delivery entirely.
 
 ## Cloud sync (optional, off by default)

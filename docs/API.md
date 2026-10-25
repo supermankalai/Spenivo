@@ -4,8 +4,11 @@ Base path `/api/v1`. JSON only. Amounts are integer paise; timestamps are epoch 
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/auth/register` | – | `{email, password(≥10)}` → `201 {id, email}`; `409` if taken |
-| POST | `/auth/login` | – | `{email, password}` → `{access_token, token_type}`; `401` on any failure |
+| POST | `/auth/register` | – | `{username (3–64: a-z 0-9 . _ - @, case-insensitive), password(≥8)}` → `201 {id, username, recovery_code}` (code shown once, only its hash is stored); `409` if taken |
+| POST | `/auth/login` | – | `{username, password}` → `{access_token, token_type}`; `401` on any failure |
+| POST | `/auth/reset-password` | – | `{username, recovery_code, new_password(≥8)}` → `{access_token, recovery_code}` (new single-use code); `400` if they don’t match. Signs out older sessions |
+| POST | `/auth/change-password` | ✓ | `{current_password, new_password}` → `{access_token}`; signs out other sessions |
+| POST | `/auth/recovery-code` | ✓ | `{password}` → `{recovery_code}`; replaces the old code |
 | GET | `/transactions` | ✓ | `?limit=1..200&offset&start&end&status` → `{items, total, limit, offset}`, newest first, excludes deleted |
 | POST | `/transactions` | ✓ | Create; optional client `id`; `409` if the id exists for this user |
 | PATCH | `/transactions/{id}` | ✓ | Partial update (unknown fields → `422`); `404` if not yours/deleted |
@@ -52,4 +55,4 @@ Environment variables (see `backend/.env.example`): `DATABASE_URL`, `JWT_SECRET`
 
 ## Not implemented
 
-Password reset, email verification, account deletion endpoint, rate limiting / lockout, refresh tokens, pagination cursors for very large histories.
+Email-based password reset (there is no email on file: use the recovery code), account deletion endpoint, rate limiting / lockout, refresh tokens, pagination cursors for very large histories.

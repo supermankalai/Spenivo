@@ -38,8 +38,13 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    # Login identifier: Indian mobile number in E.164 form (+91XXXXXXXXXX). Not yet OTP-verified.
+    mobile: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
+    # Argon2 hash of the one-time recovery code (forgot password); null until one is issued.
+    recovery_code_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Tokens issued before this moment are rejected (set on password change/reset).
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Monotonic per-user change counter; every accepted change gets the next value.
     sync_counter: Mapped[int] = mapped_column(BigInteger, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

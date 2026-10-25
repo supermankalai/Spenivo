@@ -33,35 +33,27 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 
 **Samsung / Xiaomi / Oppo / Vivo:** set Daily Spend's battery usage to *Unrestricted* (Settings › Apps › Daily Spend › Battery), or the OS may stop the listener. Payments made while it is stopped are missed — enter them manually.
 
-## 3. Verify payment-app package names on your phone
+## 3. Which app is watched (bank SMS alerts)
 
-Package ids differ between variants and are not guaranteed. Check what is installed:
+Daily Spend reads **bank debit alert SMS** through the notifications of your SMS app. This works for UPI payments from any app, cards, ATM and NEFT, and needs no SMS permission. UPI-app notifications (PhonePe, Google Pay, …) are **not** watched by default: many apps do not notify for in-app payments, and watching both would create duplicates.
 
-```bash
-adb shell pm list packages | grep -i -E "paisa|phonepe|paytm|bhim|npci"
-```
+Watched by default: the phone's **default SMS app** plus `com.google.android.apps.messaging` (Google Messages), `com.samsung.android.messaging` (Samsung Messages), `com.android.mms` and `com.android.messaging`.
 
-Commonly observed (verify!):
+Requirements:
 
-| App | Package | Verified in this project |
-|---|---|---|
-| PhonePe | `com.phonepe.app` | Installed on the test phone (Samsung SM-M076B, Android 16) — wording not yet verified |
-| Google Pay (India) | `com.google.android.apps.nbu.paisa.user` | Not verified |
-| Paytm | `net.one97.paytm` | Not verified |
+- Notifications must be **on** for your SMS app and for bank conversations (not muted/blocked; spam-filtered messages that never notify cannot be read).
+- Check your default SMS app: `adb shell cmd role get-role-holders android.app.role.SMS`.
 
-To see which package actually posted a payment notification, after making a real payment:
-
-```bash
-adb shell dumpsys notification --noredact | grep -E "pkg=|android.title|android.text" | head -50
-```
-
-Edit the list in the app: Settings › Automatic tracking › *Payment apps to watch*. Unknown packages use the generic parser.
+Edit the list in the app: Settings › Automatic tracking › *Read bank alerts from*. SMS apps use the bank-alert parser (a message must mention an account, card, UPI/VPA, reference or bank before anything else is checked); any other package you add uses the generic payment-app rules.
 
 ## 4. Test without spending money
 
-Android's shell can post notifications. They come from package **`com.android.shell`**, so temporarily add `com.android.shell` to *Payment apps to watch* in the app, make sure tracking is on and access granted, then:
+Real bank SMS cannot be faked over adb, but Android's shell can post notifications. They come from package **`com.android.shell`** (parsed with the generic rules, which handle bank-style wording too), so temporarily add `com.android.shell` to *Read bank alerts from* in the app, make sure tracking is on and access granted, then:
 
 ```bash
+# Bank-style debit alert → confirmed, payee SWIGGY, method UPI
+adb shell cmd notification post -t "'AD-HDFCBK'" sms1 "'Rs.250.00 debited from A/c XX1234 to VPA swiggy@icici on 25-10-26. UPI Ref No 529812345678'"
+
 # Successful payment → should appear on Today as confirmed (Other/Food category)
 adb shell cmd notification post -t "'₹250 paid to Swiggy'" upi1 "'Payment successful. UPI Ref No. 412345678901'"
 

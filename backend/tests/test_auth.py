@@ -4,34 +4,40 @@ from app.core.security import create_access_token
 
 
 def test_register_and_login(client):
-    r = client.post("/api/v1/auth/register", json={"email": "  Asha@Example.com ", "password": "long-enough-pw"})
+    r = client.post("/api/v1/auth/register", json={"mobile": "98765 43210", "password": "long-enough"})
     assert r.status_code == 201
-    assert r.json()["email"] == "asha@example.com"
+    assert r.json()["mobile"] == "+919876543210"
     assert "password" not in r.text
 
-    r = client.post("/api/v1/auth/login", json={"email": "asha@example.com", "password": "long-enough-pw"})
-    assert r.status_code == 200
+    # Any common format of the same number logs in.
+    for variant in ("9876543210", "+91 98765-43210", "09876543210", "919876543210"):
+        r = client.post("/api/v1/auth/login", json={"mobile": variant, "password": "long-enough"})
+        assert r.status_code == 200, variant
     assert r.json()["token_type"] == "bearer"
 
 
-def test_duplicate_email_rejected(client):
-    body = {"email": "a@example.com", "password": "long-enough-pw"}
-    assert client.post("/api/v1/auth/register", json=body).status_code == 201
-    assert client.post("/api/v1/auth/register", json=body).status_code == 409
-
-
-def test_weak_input_rejected(client):
-    assert client.post("/api/v1/auth/register", json={"email": "a@example.com", "password": "short"}).status_code == 422
+def test_duplicate_mobile_rejected(client):
     assert (
-        client.post("/api/v1/auth/register", json={"email": "not-an-email", "password": "long-enough-pw"}).status_code
-        == 422
+        client.post("/api/v1/auth/register", json={"mobile": "9876543210", "password": "long-enough-pw"}).status_code
+        == 201
     )
+    r = client.post("/api/v1/auth/register", json={"mobile": "+91 98765 43210", "password": "other-password"})
+    assert r.status_code == 409
+    assert r.json()["detail"] == "An account with this mobile number already exists. Log in instead."
+
+
+def test_invalid_input_rejected(client):
+    assert client.post("/api/v1/auth/register", json={"mobile": "9876543210", "password": "short"}).status_code == 422
+    # Too short/long, starts with 0-5, letters, foreign country code.
+    for bad in ("98765", "98765432101", "5876543210", "98765abcde", "+44 7911 123456", "1234567890"):
+        r = client.post("/api/v1/auth/register", json={"mobile": bad, "password": "long-enough-pw"})
+        assert r.status_code == 422, bad
 
 
 def test_wrong_password_and_unknown_user_look_the_same(client):
-    client.post("/api/v1/auth/register", json={"email": "a@example.com", "password": "long-enough-pw"})
-    wrong = client.post("/api/v1/auth/login", json={"email": "a@example.com", "password": "nope-nope-nope"})
-    unknown = client.post("/api/v1/auth/login", json={"email": "who@example.com", "password": "nope-nope-nope"})
+    client.post("/api/v1/auth/register", json={"mobile": "9876543210", "password": "long-enough-pw"})
+    wrong = client.post("/api/v1/auth/login", json={"mobile": "9876543210", "password": "nope-nope-nope"})
+    unknown = client.post("/api/v1/auth/login", json={"mobile": "9123456789", "password": "nope-nope-nope"})
     assert wrong.status_code == unknown.status_code == 401
     assert wrong.json() == unknown.json()
 

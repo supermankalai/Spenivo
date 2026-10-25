@@ -50,22 +50,22 @@ def client(tmp_path):
     engine.dispose()
 
 
-def auth_headers(client: TestClient, email: str, password: str = "correct-horse-battery") -> dict[str, str]:
-    r = client.post("/api/v1/auth/register", json={"email": email, "password": password})
+def auth_headers(client: TestClient, mobile: str, password: str = "correct-horse-battery") -> dict[str, str]:
+    r = client.post("/api/v1/auth/register", json={"mobile": mobile, "password": password})
     assert r.status_code == 201, r.text
-    r = client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    r = client.post("/api/v1/auth/login", json={"mobile": mobile, "password": password})
     assert r.status_code == 200, r.text
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
 @pytest.fixture
 def alice(client):
-    return auth_headers(client, "alice@example.com")
+    return auth_headers(client, "9876500001")
 
 
 @pytest.fixture
 def bob(client):
-    return auth_headers(client, "bob@example.com")
+    return auth_headers(client, "9876500002")
 
 
 def make_tx(**overrides):

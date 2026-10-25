@@ -1,10 +1,12 @@
-# Daily Spend
+# MyExpenses
 
-A simple, private expense tracker for India. Record an expense in a few seconds, see what you spent today and this month, and — on Android, if you allow it — have UPI payments from apps like PhonePe or Google Pay recorded automatically from their notifications.
+**Know Where Your Money Goes.** A simple, private expense tracker for India (project codename: Daily Spend). Record an expense in a few seconds, see what you spent today and this month, and — on Android, if you allow it — have payments recorded automatically from your bank's SMS debit alerts (any UPI app, card, ATM or NEFT).
 
 - **Local-first:** all data lives in SQLite on the phone. No account, no internet needed.
-- **Automatic tracking (optional, Android):** a native `NotificationListenerService` reads payment-app notifications you allow, keeps only amount / payee / reference / time, and discards the text.
+- **Automatic tracking (optional, Android):** a native `NotificationListenerService` reads the notifications of your SMS app, uses only bank debit alerts, keeps amount / payee / reference / method / time, and discards the text. No SMS permission is used.
 - **Safe by default:** failed, incoming, ambiguous and possibly duplicate payments are never counted silently — uncertain ones wait in a review queue.
+- **Daily and monthly budgets with alerts:** notifications at 50%, 80% and 90%, one sound alert at 100%, and a red over-budget state that asks for (and stores) the reason. Alerts also fire for bank-SMS payments recorded while the app is closed.
+- **Reminders:** morning "how much will you spend today?" (sets today's budget), evening cash-expense check, and a 1st-of-month budget prompt. All configurable in Settings › Notifications & reminders.
 - **Optional sync:** a FastAPI + PostgreSQL backend for backup across devices, off unless you sign in.
 
 | | |
@@ -70,9 +72,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 API docs at `http://localhost:8000/docs` (disabled when `ENVIRONMENT=production`). See [docs/API.md](docs/API.md).
 
-To pre-fill the server URL, copy `mobile/.env.example` to `mobile/.env` and set `EXPO_PUBLIC_API_URL` (restart Metro after changing it).
-
-To sync from the app: Settings → Cloud sync & account → enter the server URL (from a phone on the same Wi-Fi, use your PC's LAN IP, e.g. `http://192.168.1.20:8000`; use HTTPS for anything beyond local testing).
+The account server address is set at build time with `EXPO_PUBLIC_API_URL` in `mobile/.env` (copy `mobile/.env.example`; restart Metro after changing it) and is never shown in the app. Users only enter a username and password — during the first-run steps or later in Settings › Account. For a phone on USB, `adb reverse tcp:8000 tcp:8000` makes `http://localhost:8000` reach the PC; release builds need an `https://` URL.
 
 ## Checks
 
@@ -90,8 +90,8 @@ See [docs/TESTING.md](docs/TESTING.md) for what each suite covers and the latest
 ## Known limitations
 
 - **Not a bank ledger.** Notification parsing misses payments (apps that don't notify, notifications dismissed/blocked, OEM battery killers) and can misread details. Check your bank/UPI app for authoritative records.
-- **Parsers are rule-based and tested only against synthetic fixtures.** Real Google Pay / PhonePe / Paytm wording differs by version and language and has not been verified. Add redacted real samples to `modules/upi-notifications/fixtures/notifications.json` and adjust rules.
-- **Default package IDs** (`com.google.android.apps.nbu.paisa.user`, `com.phonepe.app`, `net.one97.paytm`) are commonly observed values; only `com.phonepe.app` was confirmed installed on the test phone. They are user-editable in the app.
+- **Parsers are rule-based and tested only against synthetic fixtures** modelled on common HDFC / SBI / ICICI / Axis / Kotak alert formats. Real bank wording varies and changes; add redacted real samples to `modules/upi-notifications/fixtures/notifications.json` and adjust rules.
+- **Watched apps** default to the phone's default SMS app plus Google Messages / Samsung Messages / AOSP Messages. If SMS notifications are muted or hidden, alerts cannot be read. UPI-app notifications are not watched by default (a package can still be added manually).
 - English notifications only; amounts must be shown with ₹ / Rs / INR.
 - Bank **SMS** are not read (no SMS permission by design).
 - Date picker uses the device timezone; totals always use IST. Users outside IST may see picked times shifted.

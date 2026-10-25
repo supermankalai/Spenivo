@@ -24,15 +24,16 @@
 - `repository.test.ts` — **real SQLite**: migrations + seeds, add/edit/delete manual expense with totals updating, validation at repository and CHECK-constraint level, soft-delete tombstones, duplicate-link release, categories, settings/budget, CSV (formula-injection safe) + JSON export, clear-all. Runs with no network = offline behaviour.
 - `notificationImport.test.ts` — confirmed vs pending review (uncertain status / low confidence), exact duplicate by reference, manual entry + notification → possible duplicate for review, P2P to Transfers, learned merchant rules, malformed items dropped, **durable handoff**: ack only after save and idempotent re-drain after a crash.
 - `sync.test.ts` — change collection since last push, last-writer-wins both directions, tombstones, dangling category ids.
+- `budget.test.ts` — alert levels (50/80/90/100/over), skipping intermediate levels, single audible alert, IST period keys, per-day budget overrides, daily vs monthly independence, transfers ignored, re-alert after raising a budget, alerts switch, new-day reset, over-budget reasons and daily adherence.
 - `TransactionRow.test.tsx` — React Native Testing Library: INR formatting, relative time, pending/not-counted badges, press handler.
 
 ### Kotlin — JUnit (`modules/upi-notifications/android/src/test`)
 
-- `FixtureParserTest` runs every case in `modules/upi-notifications/fixtures/notifications.json` (25 synthetic cases): successful merchant/P2P payments, Indian number formats, bank-style "debited", PhonePe multi-line big text, Paytm "Paid Successfully to", pending → uncertain, ambiguous wording, two amounts, failed/declined/cancelled, incoming/credited/refund, collect requests, OTP, promotions, missing amount, malformed amount, unrelated chat, empty, group summaries, missing payee → below auto-confirm threshold.
+- `FixtureParserTest` runs every case in `modules/upi-notifications/fixtures/notifications.json` (42 synthetic cases). Bank SMS (17): HDFC multi-line, SBI "debited by" without currency, ICICI "; X credited", Axis UPI/P2M and P2A, Kotak VPA, card spend with balance (balance ignored), ATM withdrawal → transfer, NEFT, credit alert, OTP for a transaction, OTP "to be debited", debit with "never share OTP" footer (kept), AutoPay notice, failed txn, personal chat, promo. Payment-app style (25): successful merchant/P2P payments, Indian number formats, bank-style "debited", PhonePe multi-line big text, Paytm "Paid Successfully to", pending → uncertain, ambiguous wording, two amounts, failed/declined/cancelled, incoming/credited/refund, collect requests, OTP, promotions, missing amount, malformed amount, unrelated chat, empty, group summaries, missing payee → below auto-confirm threshold.
 - `TextRulesTest` — exact paise conversion, references require digits.
 - `NotificationProcessorTest` — tracking off, package allowlist, repost suppression window.
 
-The fixtures are **synthetic**. Passing them does not prove that real Google Pay / PhonePe / Paytm notifications parse correctly — see `ANDROID_NOTIFICATION_SETUP.md` §5.
+The fixtures are **synthetic**. Passing them does not prove that real bank SMS or payment-app notifications parse correctly — see `ANDROID_NOTIFICATION_SETUP.md` §5.
 
 ### Backend — pytest (`backend/tests`)
 
@@ -52,8 +53,8 @@ Verified on 2026-10-25 (Windows 11, Node 24.21, JDK 21, Python 3.12.10, Expo SDK
 | `npx tsc --noEmit` | pass |
 | `npx expo lint` | pass (0 problems) |
 | `npx expo-doctor` | 20/20 checks passed |
-| Jest | 8 suites, 77 tests passed |
-| Kotlin unit tests | 3 classes, 6 tests passed (fixture test covers all 25 fixtures) |
+| Jest | 9 suites, 90 tests passed |
+| Kotlin unit tests | 4 classes, 13 tests passed (fixture test covers all 42 fixtures; BudgetLogicTest 7) |
 | Backend pytest (SQLite) | 23 passed |
 | Backend pytest (PostgreSQL 18.6, local `daily_spend_test`) | 23 passed |
 | Backend `ruff check` | pass |

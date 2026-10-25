@@ -1,6 +1,7 @@
+import re
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 MAX_AMOUNT_MINOR = 1_000_000_000  # ₹1 crore
 
@@ -16,29 +17,78 @@ EpochMs = Annotated[int, Field(ge=0, le=4_102_444_800_000)]  # epoch millisecond
 # --- auth -----------------------------------------------------------------
 
 
-class Credentials(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=10, max_length=128)
+def normalise_mobile(value: str) -> str:
+    """
+    Indian mobile numbers in any common format → E.164 (+91XXXXXXXXXX).
+    Accepts "98765 43210", "+91-98765-43210", "098765 43210", "919876543210".
+    """
+    digits = re.sub(r"D", "", value)
+    if len(digits) == 12 and digits.startswith("91"):
+        digits = digits[2:]
+    elif len(digits) == 11 and digits.startswith("0"):
+        digits = digits[1:]
+    if not re.fullmatch(r"[6-9]d{9}", digits):
+        raise ValueError("Enter a valid 10-digit Indian mobile number.")
+    return "+91" + digits
 
-    @field_validator("email")
+
+class _MobileIn(BaseModel):
+    mobile: str = Field(min_length=10, max_length=20)
+
+    @field_validator("mobile")
     @classmethod
-    def lower_email(cls, v: str) -> str:
-        return v.strip().lower()
+    def _mobile(cls, v: str) -> str:
+        return normalise_mobile(v)
 
 
-class LoginRequest(BaseModel):
-    email: EmailStr
+class Credentials(_MobileIn):
+    password: str = Field(min_length=8, max_length=128)
+
+
+class LoginRequest(_MobileIn):
     password: str = Field(min_length=1, max_length=128)
 
 
 class UserOut(BaseModel):
     id: str
-    email: str
+    mobile: str
+
+
+class RegisterOut(UserOut):
+    # Shown to the user once so they can reset a forgotten password; only its hash is stored.
+    recovery_code: str
 
 
 class TokenOut(BaseModel):
     access_token: str
     token_type: Literal["bearer"] = "bearer"
+
+
+RecoveryCode = Field(min_length=16, max_length=40)
+NewPassword = Field(min_length=8, max_length=128)
+
+
+class ResetPasswordIn(_MobileIn):
+    recovery_code: str = RecoveryCode
+    new_password: str = NewPassword
+
+
+class ResetPasswordOut(TokenOut):
+    # The used code is replaced; this new one is shown once.
+    recovery_code: str
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = NewPassword
+
+
+class ConfirmPasswordIn(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+
+
+class RecoveryCodeOut(BaseModel):
+    recovery_code: str
 
 
 # --- transactions ---------------------------------------------------------
