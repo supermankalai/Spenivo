@@ -1,6 +1,6 @@
 # Free and Pro
 
-MyExpenses has two plans. Pro is a Google Play subscription.
+MyExpenses has two plans. Pro is paid by **UPI** and confirmed by hand. There's no Google Play Billing, so the app is shared as an APK rather than through the Play Store: Play requires its own billing for subscriptions.
 
 ## What each plan gets
 
@@ -29,41 +29,51 @@ The only thing that changes is that you can't add more past the Free limits.
 
 ## Prices
 
-| Base plan | Price | Notes |
+| Plan | Price | Length |
 |---|---|---|
-| `monthly` | ₹49 / month | |
-| `yearly` | ₹399 / year | About 32% cheaper than monthly; has a 7-day free trial |
+| Monthly | ₹49 | 30 days |
+| Yearly | ₹399 | 365 days |
 
-The app always shows the prices Google Play returns, so you can change them in Play Console without updating the app.
+Prices are set on the server (`PRO_PRICE_MONTHLY_MINOR`, `PRO_PRICE_YEARLY_MINOR` in paise), and the app shows whatever the server returns. Change them in `.env`, then restart the API.
 
-## Play Console setup (one time)
+Pro doesn't auto-renew. Renewing early adds to the time left.
 
-1. Upload a build that includes billing (this one, or later) to the **Internal testing** track. Play only lets you create subscriptions after a build with the billing permission has been uploaded.
-2. Go to **Monetize → Subscriptions → Create subscription**:
-   - **Product ID:** `dailyspend_pro`. It must match exactly, and it can't be changed later.
-   - **Name:** MyExpenses Pro.
-3. Add two **base plans** to it:
-   - `monthly`: auto-renewing, billed every month, ₹49.
-   - `yearly`: auto-renewing, billed every year, ₹399.
-4. On the `yearly` base plan, add an **offer**:
-   - **Eligibility:** new customer acquisition, i.e. "Never had this subscription".
-   - **Phase:** a 7-day free trial.
-   - Then activate the offer and both base plans.
-5. Go to **Setup → License testing** and add the Google accounts that should be able to buy without being charged.
-6. Install the app from the internal testing link on a tester's phone.
+## How a purchase works
 
-## How it works in the app
+**In the app:**
+1. The user signs in with Google. Pro belongs to the account, so it survives a reinstall or a new phone.
+2. They pick a plan. The server creates a reference code, e.g. `MX-7K3P9`.
+3. **Open UPI app** launches their UPI app with your UPI ID, the amount and the code filled in. They can also copy the UPI ID and code and pay from another phone.
+4. They enter the **12-digit UTR** (UPI reference) shown in their UPI app and tap **I've paid**.
 
-- **Google Play decides who has Pro.** The app checks at launch and whenever it comes back to the front (`checkPro` in `mobile/src/services/billing.ts`). Pro follows the Google account, so it returns after a reinstall or on a new phone. **Restore purchase** on the Pro screen checks again on demand.
-- **Purchases are acknowledged on the phone.** Google refunds any purchase that isn't acknowledged within 3 days.
-- **Offline:** if Play can't be reached, the last known answer is used for up to 7 days.
-- **Development builds** have a "pretend to be Pro" switch at the bottom of the Pro screen, so the Pro features can be tried before Play Console is set up. It doesn't exist in release builds.
+**On the server:** you check your bank or UPI app for that UTR and amount, then approve:
+```bash
+cd /opt/spenivo/backend
+sudo -u myexpenses .venv/bin/python -m app.admin pending           # who's waiting
+sudo -u myexpenses .venv/bin/python -m app.admin approve MX-7K3P9   # turn Pro on
+sudo -u myexpenses .venv/bin/python -m app.admin reject MX-7K3P9    # money not received
+sudo -u myexpenses .venv/bin/python -m app.admin grant friend@gmail.com 30   # free Pro
+sudo -u myexpenses .venv/bin/python -m app.admin users              # everyone with Pro
+```
 
-### Not done yet: checking purchases on the server
+The app picks up the change by itself the next time it's opened. Pulling down on the Pro screen also checks.
 
-The backend doesn't verify purchases. The app trusts Google Play on the phone. That's normal for a small app, but a modified APK could unlock Pro.
+**Safety checks:**
+- A UTR can only be used once.
+- One account can have at most 3 unconfirmed payments.
+- Users can only see and claim their own payments.
 
-To make it tamper-proof later:
-1. Send `purchaseToken` to a backend endpoint.
-2. Verify it with the Google Play Developer API (`purchases.subscriptionsv2.get`) using a service account.
-3. Subscribe to Real-time developer notifications so renewals and cancellations update the server.
+## Server setup
+
+Add to `backend/.env`:
+```
+PRO_UPI_ID=yourname@okaxis
+PRO_UPI_NAME=MyExpenses
+```
+Leave `PRO_UPI_ID` empty to stop selling Pro. The app then shows "Pro isn't on sale yet".
+
+**Tip:** a free **business/merchant UPI ID** works more reliably than a personal one. Some UPI apps refuse "pay with a pre-filled amount" links to personal IDs. Free options include PhonePe Business, Paytm for Business and BharatPe. If the link is refused, users can still copy the UPI ID and pay by hand.
+
+## Development
+
+Debug builds have a "pretend to be Pro" switch at the bottom of the Pro screen. Release builds don't.

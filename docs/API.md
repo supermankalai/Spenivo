@@ -16,6 +16,9 @@ Base path `/api/v1`. JSON only. Amounts are integer paise; timestamps are epoch 
 | GET | `/budgets` | ✓ | `{monthly_budget_minor, daily_budget_minor, updated_at}` |
 | PUT | `/budgets` | ✓ | `{monthly_budget_minor, daily_budget_minor}` (each `int > 0 \| null`) |
 | POST | `/sync` | ✓ | Push/pull, see below |
+| GET | `/pro` | ✓ | `{is_pro, pro_until, upi_id, payee_name, plans: [{plan, amount_minor, days}], open_payment, last_payment}`; `upi_id` is null when Pro isn't on sale |
+| POST | `/pro/payments` | ✓ | `{plan: "monthly"\|"yearly"}` → `{code, plan, amount_minor, status, utr, created_at}`; the same unpaid request is returned for the same plan; `503` without `PRO_UPI_ID`, `429` with 3 open payments |
+| POST | `/pro/payments/{code}/claim` | ✓ | `{utr}` (12 digits) → status `claimed`; `409` if already decided or the UTR was used for another payment |
 | GET | `/healthz` | – | Liveness |
 
 ## Transaction fields
@@ -54,7 +57,7 @@ The client skips echoed rows, applies newer rows locally with the same rule, and
 
 ## Configuration
 
-Environment variables (see `backend/.env.example`): `DATABASE_URL`, `JWT_SECRET` (required, ≥32 chars, app refuses to start otherwise), `ACCESS_TOKEN_MINUTES`, `ENVIRONMENT`, `LOG_LEVEL`, `CORS_ORIGINS`, `SYNC_MAX_BATCH`, `GOOGLE_CLIENT_IDS` (comma-separated OAuth client ids whose ID tokens are accepted — the app's **Web** client id; sign-in is refused while empty).
+Environment variables (see `backend/.env.example`): `DATABASE_URL`, `JWT_SECRET` (required, ≥32 chars, app refuses to start otherwise), `ACCESS_TOKEN_MINUTES`, `ENVIRONMENT`, `LOG_LEVEL`, `CORS_ORIGINS`, `SYNC_MAX_BATCH`, `GOOGLE_CLIENT_IDS` (comma-separated OAuth client ids whose ID tokens are accepted — the app's **Web** client id; sign-in is refused while empty). Pro: `PRO_UPI_ID`, `PRO_UPI_NAME`, `PRO_PRICE_MONTHLY_MINOR`, `PRO_PRICE_YEARLY_MINOR` (see [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md)).
 
 ## Not implemented
 

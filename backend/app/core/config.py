@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     # OAuth client ids whose Google ID tokens are accepted (comma separated). The app's
     # *Web* client id is the audience of tokens it gets from Google Sign-In on Android.
     google_client_ids: str = ""
+    # Pro by UPI: where payments go and what they cost (paise). Empty UPI id = Pro can't be bought.
+    pro_upi_id: str = ""
+    pro_upi_name: str = "MyExpenses"
+    pro_price_monthly_minor: int = 4900
+    pro_price_yearly_minor: int = 39900
 
     @property
     def google_audiences(self) -> list[str]:

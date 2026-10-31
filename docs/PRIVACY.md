@@ -39,11 +39,10 @@ Only when the user signs in with Google:
 
 Optional. Uses Android's biometric prompt (fingerprint/face, falling back to the screen-lock PIN/pattern). The app only learns pass/fail. It re-locks after the app has been in the background for more than 30 seconds.
 
-## Pro subscription (optional)
+## Pro (optional, paid by UPI)
 
-- Google Play handles the payment; the app never sees card, UPI or bank details.
-- The app only asks Google Play whether this Google account has an active Pro subscription, and keeps that yes/no on the phone.
-- Nothing about the subscription is sent to the MyExpenses server.
+- Payment happens in the user's own UPI app; MyExpenses never sees bank, card or UPI PIN details.
+- To confirm a payment the server stores: the plan, amount, a reference code, the 12-digit UPI reference (UTR) the user enters, and when Pro ends. These are linked to the Google account and deleted with it.
 
 ## User control
 

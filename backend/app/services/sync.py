@@ -16,8 +16,8 @@ from app.schemas import (
     SyncReminder,
     SyncReminderPayment,
     SyncRequest,
-    SyncSplit,
     SyncResponse,
+    SyncSplit,
     SyncTransaction,
 )
 

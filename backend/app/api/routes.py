@@ -10,12 +10,17 @@ from app.api.deps import CurrentUser, DbSession, VerifyGoogle
 from app.core.config import get_settings
 from app.core.google import InvalidGoogleToken
 from app.core.security import create_access_token
-from app.models import Budget, Category, Transaction, User
+from app.models import Budget, Category, ProPayment, Transaction, User
 from app.schemas import (
     BudgetIn,
     BudgetOut,
     CategoryTotalOut,
     GoogleSignInIn,
+    ProClaimIn,
+    ProPaymentIn,
+    ProPaymentOut,
+    ProPlanOut,
+    ProStatusOut,
     SignInOut,
     SummaryOut,
     SyncRequest,
@@ -26,7 +31,7 @@ from app.schemas import (
     TransactionUpdate,
     UserOut,
 )
-from app.services import insights
+from app.services import insights, pro
 from app.services.sync import apply_sync, lock_user, next_version
 
 router = APIRouter(prefix="/api/v1")
@@ -75,6 +80,53 @@ def delete_account(user: CurrentUser, db: DbSession) -> Response:
     db.delete(user)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- Pro (paid by UPI, approved by the owner) -------------------------------
+
+
+def _pro_status(db: DbSession, user: User) -> ProStatusOut:
+    settings = get_settings()
+    current = pro.open_payment(db, user)
+    last = db.execute(
+        select(ProPayment)
+        .where(ProPayment.user_id == user.id, ProPayment.status.in_(("approved", "rejected")))
+        .order_by(ProPayment.decided_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return ProStatusOut(
+        is_pro=pro.is_pro(user),
+        pro_until=pro.aware(user.pro_until),
+        upi_id=settings.pro_upi_id or None,
+        payee_name=settings.pro_upi_name,
+        plans=[ProPlanOut(plan=p, amount_minor=pro.price_of(p, settings), days=d) for p, d in pro.PLAN_DAYS.items()],
+        open_payment=ProPaymentOut.model_validate(current) if current else None,
+        last_payment=ProPaymentOut.model_validate(last) if last else None,
+    )
+
+
+def _pro_call(fn, *args):  # noqa: ANN001, ANN202
+    try:
+        return fn(*args)
+    except pro.ProError as e:
+        raise HTTPException(e.status_code, str(e)) from None
+
+
+@router.get("/pro", response_model=ProStatusOut, tags=["pro"])
+def pro_status(user: CurrentUser, db: DbSession) -> ProStatusOut:
+    return _pro_status(db, user)
+
+
+@router.post("/pro/payments", response_model=ProPaymentOut, tags=["pro"])
+def start_pro_payment(body: ProPaymentIn, user: CurrentUser, db: DbSession) -> ProPaymentOut:
+    """A reference code and amount to pay by UPI. Asking again for the same plan returns the same code."""
+    return ProPaymentOut.model_validate(_pro_call(pro.start_payment, db, user, body.plan, get_settings()))
+
+
+@router.post("/pro/payments/{code}/claim", response_model=ProPaymentOut, tags=["pro"])
+def claim_pro_payment(code: str, body: ProClaimIn, user: CurrentUser, db: DbSession) -> ProPaymentOut:
+    """'I've paid': records the UPI reference for the owner to check."""
+    return ProPaymentOut.model_validate(_pro_call(pro.claim_payment, db, user, code, body.utr))
 
 
 # --- transactions ---------------------------------------------------------

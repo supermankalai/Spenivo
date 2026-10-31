@@ -46,6 +46,8 @@ class User(Base):
     # Monotonic per-user change counter; every accepted change gets the next value.
     sync_counter: Mapped[int] = mapped_column(BigInteger, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Pro is on until this moment (set when a UPI payment is approved); null = Free.
+    pro_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Category(Base):
@@ -215,3 +217,26 @@ class BudgetOverrun(Base):
         CheckConstraint("scope IN ('day', 'month')", name="ck_budget_overruns_scope"),
         Index("ix_budget_overruns_user_version", "user_id", "server_version"),
     )
+
+
+class ProPayment(Base):
+    """A Pro purchase paid by UPI: created in the app, claimed with the UTR, approved by the owner."""
+
+    __tablename__ = "pro_payments"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'claimed', 'approved', 'rejected')", name="ck_pro_payments_status"),
+        CheckConstraint("plan IN ('monthly', 'yearly')", name="ck_pro_payments_plan"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # Reference the user puts in the UPI note, e.g. "MX-7K3P9".
+    code: Mapped[str] = mapped_column(String(12), unique=True)
+    plan: Mapped[str] = mapped_column(String(8))
+    amount_minor: Mapped[int] = mapped_column(Integer)
+    # 12-digit UPI reference (UTR/RRN) the user reports after paying.
+    utr: Mapped[str | None] = mapped_column(String(22), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(10), default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

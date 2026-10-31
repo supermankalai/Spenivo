@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -252,3 +253,43 @@ class SyncResponse(BaseModel):
     reminders: list[SyncReminder] = []
     reminder_payments: list[SyncReminderPayment] = []
     splits: list[SyncSplit] = []
+
+
+# --- Pro (paid by UPI) ------------------------------------------------------
+
+
+class ProPlanOut(BaseModel):
+    plan: Literal["monthly", "yearly"]
+    amount_minor: int
+    days: int
+
+
+class ProPaymentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str
+    plan: Literal["monthly", "yearly"]
+    amount_minor: int
+    status: Literal["pending", "claimed", "approved", "rejected"]
+    utr: str | None
+    created_at: datetime
+
+
+class ProStatusOut(BaseModel):
+    is_pro: bool
+    pro_until: datetime | None
+    # Where to pay; null when Pro can't be bought right now.
+    upi_id: str | None
+    payee_name: str
+    plans: list[ProPlanOut]
+    open_payment: ProPaymentOut | None
+    # The last decided payment, so the app can say "approved" or "couldn't be verified".
+    last_payment: ProPaymentOut | None
+
+
+class ProPaymentIn(BaseModel):
+    plan: Literal["monthly", "yearly"]
+
+
+class ProClaimIn(BaseModel):
+    utr: str = Field(min_length=12, max_length=22)
