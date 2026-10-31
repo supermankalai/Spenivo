@@ -38,13 +38,11 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    # Login identifier: Indian mobile number in E.164 form (+91XXXXXXXXXX). Not yet OTP-verified.
-    mobile: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    password_hash: Mapped[str] = mapped_column(String(255))
-    # Argon2 hash of the one-time recovery code (forgot password); null until one is issued.
-    recovery_code_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Tokens issued before this moment are rejected (set on password change/reset).
-    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Google account id ("sub" claim): the only login identifier. Null only for
+    # accounts created before Google sign-in, which can no longer log in.
+    google_sub: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     # Monotonic per-user change counter; every accepted change gets the next value.
     sync_counter: Mapped[int] = mapped_column(BigInteger, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -61,6 +59,8 @@ class Category(Base):
     counts_as_spending: Mapped[bool] = mapped_column(Boolean, default=True)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    # Monthly budget for this category (paise); null = none.
+    budget_minor: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     updated_at: Mapped[int] = mapped_column(BigInteger)
     server_version: Mapped[int] = mapped_column(BigInteger, default=0)
 
@@ -105,5 +105,113 @@ class Budget(Base):
 
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     monthly_budget_minor: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # The usual daily budget; DayBudget rows override it for single days.
+    daily_budget_minor: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     updated_at: Mapped[int] = mapped_column(BigInteger, default=0)
     server_version: Mapped[int] = mapped_column(BigInteger, default=0)
+
+
+class DayBudget(Base):
+    """A budget for one specific day (YYYY-MM-DD, IST). amount_minor null = override removed."""
+
+    __tablename__ = "day_budgets"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    day_key: Mapped[str] = mapped_column(String(10), primary_key=True)
+    amount_minor: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    updated_at: Mapped[int] = mapped_column(BigInteger)
+    server_version: Mapped[int] = mapped_column(BigInteger, default=0)
+
+    __table_args__ = (Index("ix_day_budgets_user_version", "user_id", "server_version"),)
+
+
+class Reminder(Base):
+    """An EMI or regular bill due on a fixed day each month."""
+
+    __tablename__ = "reminders"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(8))
+    name: Mapped[str] = mapped_column(String(60))
+    amount_minor: Mapped[int] = mapped_column(BigInteger)
+    due_day: Mapped[int] = mapped_column(Integer)
+    category_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    start_month: Mapped[str] = mapped_column(String(7))
+    total_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    remind_days_before: Mapped[int] = mapped_column(Integer, default=1)
+    # Reminders a day while unpaid (1-3), and what the notification's snooze button does.
+    times_per_day: Mapped[int] = mapped_column(Integer, default=1)
+    # The user's reminder times, minutes after midnight IST ("540,780,1080"); "" = defaults.
+    remind_times: Mapped[str] = mapped_column(String(32), default="")
+    snooze: Mapped[str] = mapped_column(String(8), default="1h")
+    created_at: Mapped[int] = mapped_column(BigInteger)
+    updated_at: Mapped[int] = mapped_column(BigInteger)
+    deleted_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    server_version: Mapped[int] = mapped_column(BigInteger, default=0)
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('emi', 'bill')", name="ck_reminders_kind"),
+        Index("ix_reminders_user_version", "user_id", "server_version"),
+    )
+
+
+class Split(Base):
+    """Part of an expense someone owes the user ("who owes you"); settled_at once repaid."""
+
+    __tablename__ = "splits"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    transaction_id: Mapped[str] = mapped_column(String(64))
+    person: Mapped[str] = mapped_column(String(40))
+    amount_minor: Mapped[int] = mapped_column(BigInteger)
+    settled_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[int] = mapped_column(BigInteger)
+    updated_at: Mapped[int] = mapped_column(BigInteger)
+    deleted_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    server_version: Mapped[int] = mapped_column(BigInteger, default=0)
+
+    __table_args__ = (Index("ix_splits_user_version", "user_id", "server_version"),)
+
+
+class ReminderPayment(Base):
+    """A month of an EMI/bill marked paid (deleted_at set when undone)."""
+
+    __tablename__ = "reminder_payments"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    reminder_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    period_key: Mapped[str] = mapped_column(String(7), primary_key=True)
+    transaction_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_expense: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Counted in the monthly budget (the user's answer when marking it paid).
+    counted: Mapped[bool] = mapped_column(Boolean, default=True)
+    paid_at: Mapped[int] = mapped_column(BigInteger)
+    updated_at: Mapped[int] = mapped_column(BigInteger)
+    deleted_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    server_version: Mapped[int] = mapped_column(BigInteger, default=0)
+
+    __table_args__ = (Index("ix_reminder_payments_user_version", "user_id", "server_version"),)
+
+
+class BudgetOverrun(Base):
+    """Why a day (YYYY-MM-DD) or month (YYYY-MM) went over budget, as the user told us."""
+
+    __tablename__ = "budget_overruns"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(5), primary_key=True)
+    period_key: Mapped[str] = mapped_column(String(10), primary_key=True)
+    budget_minor: Mapped[int] = mapped_column(BigInteger)
+    spent_minor: Mapped[int] = mapped_column(BigInteger)
+    reason_code: Mapped[str] = mapped_column(String(32))
+    note: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    created_at: Mapped[int] = mapped_column(BigInteger)
+    updated_at: Mapped[int] = mapped_column(BigInteger)
+    server_version: Mapped[int] = mapped_column(BigInteger, default=0)
+
+    __table_args__ = (
+        CheckConstraint("scope IN ('day', 'month')", name="ck_budget_overruns_scope"),
+        Index("ix_budget_overruns_user_version", "user_id", "server_version"),
+    )

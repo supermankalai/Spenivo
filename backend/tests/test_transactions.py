@@ -71,7 +71,13 @@ def test_pagination_and_filters(client, alice):
 
 
 def test_budget(client, alice):
-    assert client.get("/api/v1/budgets", headers=alice).json() == {"monthly_budget_minor": None, "updated_at": 0}
-    r = client.put("/api/v1/budgets", json={"monthly_budget_minor": 3_000_000}, headers=alice)
-    assert r.json()["monthly_budget_minor"] == 3_000_000
+    assert client.get("/api/v1/budgets", headers=alice).json() == {
+        "monthly_budget_minor": None,
+        "daily_budget_minor": None,
+        "updated_at": 0,
+    }
+    r = client.put(
+        "/api/v1/budgets", json={"monthly_budget_minor": 3_000_000, "daily_budget_minor": 100_000}, headers=alice
+    )
+    assert (r.json()["monthly_budget_minor"], r.json()["daily_budget_minor"]) == (3_000_000, 100_000)
     assert client.put("/api/v1/budgets", json={"monthly_budget_minor": 0}, headers=alice).status_code == 422

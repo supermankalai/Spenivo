@@ -112,4 +112,4 @@ FastAPI app (`backend/app`): `core/` (settings from env, JWT, Argon2 hashing, JS
 
 ## Not implemented / deliberately out of scope
 
-Background/periodic sync, push notifications, password reset, rate limiting, multi-currency, iOS import, SMS parsing, accessibility-service scraping (deliberately avoided).
+Background/periodic sync while the app is closed, push notifications, rate limiting, multi-currency, iOS import, SMS parsing, accessibility-service scraping (deliberately avoided).

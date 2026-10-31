@@ -1,51 +1,35 @@
 import time
 import uuid
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-from app.api.deps import CurrentUser, DbSession
+from app.api.deps import CurrentUser, DbSession, VerifyGoogle
 from app.core.config import get_settings
-from app.core.security import (
-    create_access_token,
-    generate_recovery_code,
-    hash_password,
-    hash_recovery_code,
-    verify_password,
-    verify_recovery_code,
-)
+from app.core.google import InvalidGoogleToken
+from app.core.security import create_access_token
 from app.models import Budget, Category, Transaction, User
 from app.schemas import (
     BudgetIn,
     BudgetOut,
     CategoryTotalOut,
-    ChangePasswordIn,
-    ConfirmPasswordIn,
-    Credentials,
-    LoginRequest,
-    RecoveryCodeOut,
-    RegisterOut,
-    ResetPasswordIn,
-    ResetPasswordOut,
+    GoogleSignInIn,
+    SignInOut,
     SummaryOut,
     SyncRequest,
     SyncResponse,
-    TokenOut,
     TransactionCreate,
     TransactionOut,
     TransactionPage,
     TransactionUpdate,
+    UserOut,
 )
 from app.services import insights
 from app.services.sync import apply_sync, lock_user, next_version
 
 router = APIRouter(prefix="/api/v1")
-
-# Precomputed so failed logins for unknown numbers take as long as wrong passwords.
-_DUMMY_HASH = hash_password("timing-equaliser-not-a-real-password")
 
 
 def _now_ms() -> int:
@@ -55,75 +39,48 @@ def _now_ms() -> int:
 # --- auth -----------------------------------------------------------------
 
 
-@router.post("/auth/register", response_model=RegisterOut, status_code=status.HTTP_201_CREATED, tags=["auth"])
-def register(body: Credentials, db: DbSession) -> RegisterOut:
-    code = generate_recovery_code()
-    user = User(
-        mobile=body.mobile, password_hash=hash_password(body.password), recovery_code_hash=hash_recovery_code(code)
-    )
-    db.add(user)
+@router.post("/auth/google", response_model=SignInOut, tags=["auth"])
+def google_sign_in(body: GoogleSignInIn, db: DbSession, verify: VerifyGoogle) -> SignInOut:
+    """Sign in (or sign up) with a Google ID token. The Google account id is the login."""
+    try:
+        identity = verify(body.id_token)
+    except InvalidGoogleToken as e:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e)) from None
+    user = db.execute(select(User).where(User.google_sub == identity.sub)).scalar_one_or_none()
+    created = user is None
+    if user is None:
+        user = User(google_sub=identity.sub)
+        db.add(user)
+    # Keep the display details current (the user may change them at Google).
+    user.email = identity.email
+    user.name = identity.name
     try:
         db.commit()
     except IntegrityError:
+        # The same Google account signed up twice at once; use the row that won.
         db.rollback()
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "An account with this mobile number already exists. Log in instead."
-        ) from None
-    return RegisterOut(id=user.id, mobile=user.mobile, recovery_code=code)
+        user = db.execute(select(User).where(User.google_sub == identity.sub)).scalar_one()
+        created = False
+    return SignInOut(access_token=create_access_token(user.id), user=UserOut.model_validate(user), created=created)
 
 
-def _set_password(user: User, password: str) -> None:
-    user.password_hash = hash_password(password)
-    # Tokens issued before now stop working: other devices are signed out.
-    user.password_changed_at = datetime.now(UTC).replace(microsecond=0)
+@router.get("/auth/me", response_model=UserOut, tags=["auth"])
+def me(user: CurrentUser) -> UserOut:
+    return UserOut.model_validate(user)
 
 
-@router.post("/auth/reset-password", response_model=ResetPasswordOut, tags=["auth"])
-def reset_password(body: ResetPasswordIn, db: DbSession) -> ResetPasswordOut:
-    """Forgot password: mobile number + recovery code → new password. The code is single-use."""
-    user = db.execute(select(User).where(User.mobile == body.mobile)).scalar_one_or_none()
-    code_hash = user.recovery_code_hash if user is not None and user.recovery_code_hash else _DUMMY_HASH
-    valid = verify_recovery_code(body.recovery_code, code_hash)
-    if user is None or user.recovery_code_hash is None or not valid:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That mobile number and recovery code don’t match.")
-    _set_password(user, body.new_password)
-    new_code = generate_recovery_code()
-    user.recovery_code_hash = hash_recovery_code(new_code)
+@router.delete("/auth/me", status_code=status.HTTP_204_NO_CONTENT, tags=["auth"])
+def delete_account(user: CurrentUser, db: DbSession) -> Response:
+    """Deletes the account and every synced row (cascade). Data on the phone is untouched."""
+    db.delete(user)
     db.commit()
-    return ResetPasswordOut(access_token=create_access_token(user.id), recovery_code=new_code)
-
-
-@router.post("/auth/change-password", response_model=TokenOut, tags=["auth"])
-def change_password(body: ChangePasswordIn, user: CurrentUser, db: DbSession) -> TokenOut:
-    if not verify_password(body.current_password, user.password_hash):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Your current password is not right.")
-    _set_password(user, body.new_password)
-    db.commit()
-    # This device stays signed in with a fresh token.
-    return TokenOut(access_token=create_access_token(user.id))
-
-
-@router.post("/auth/recovery-code", response_model=RecoveryCodeOut, tags=["auth"])
-def new_recovery_code(body: ConfirmPasswordIn, user: CurrentUser, db: DbSession) -> RecoveryCodeOut:
-    """Issue a new recovery code (the old one stops working). Needs the password, not just a token."""
-    if not verify_password(body.password, user.password_hash):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Your password is not right.")
-    code = generate_recovery_code()
-    user.recovery_code_hash = hash_recovery_code(code)
-    db.commit()
-    return RecoveryCodeOut(recovery_code=code)
-
-
-@router.post("/auth/login", response_model=TokenOut, tags=["auth"])
-def login(body: LoginRequest, db: DbSession) -> TokenOut:
-    user = db.execute(select(User).where(User.mobile == body.mobile)).scalar_one_or_none()
-    valid = verify_password(body.password, user.password_hash if user else _DUMMY_HASH)
-    if user is None or not valid:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect mobile number or password.")
-    return TokenOut(access_token=create_access_token(user.id))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # --- transactions ---------------------------------------------------------
+
+
+_NULLABLE_UPDATE_FIELDS = {"category_id", "merchant", "description"}
 
 
 def _get_owned(db: DbSession, user: User, transaction_id: str) -> Transaction:
@@ -191,7 +148,7 @@ def update_transaction(
     locked = lock_user(db, user.id)
     tx = _get_owned(db, user, transaction_id)
     for field, value in body.model_dump(exclude_unset=True).items():
-        if value is None and field not in {"category_id", "merchant", "description"}:
+        if value is None and field not in _NULLABLE_UPDATE_FIELDS:
             raise HTTPException(422, f"{field} cannot be null.")
         setattr(tx, field, value)
     tx.updated_at = max(_now_ms(), tx.updated_at + 1)
@@ -291,6 +248,7 @@ def get_budget(user: CurrentUser, db: DbSession) -> BudgetOut:
     budget = db.get(Budget, user.id)
     return BudgetOut(
         monthly_budget_minor=budget.monthly_budget_minor if budget else None,
+        daily_budget_minor=budget.daily_budget_minor if budget else None,
         updated_at=budget.updated_at if budget else 0,
     )
 
@@ -303,10 +261,15 @@ def put_budget(body: BudgetIn, user: CurrentUser, db: DbSession) -> BudgetOut:
         budget = Budget(user_id=user.id, updated_at=0)
         db.add(budget)
     budget.monthly_budget_minor = body.monthly_budget_minor
+    budget.daily_budget_minor = body.daily_budget_minor
     budget.updated_at = max(_now_ms(), budget.updated_at + 1)
     budget.server_version = next_version(db, locked)
     db.commit()
-    return BudgetOut(monthly_budget_minor=budget.monthly_budget_minor, updated_at=budget.updated_at)
+    return BudgetOut(
+        monthly_budget_minor=budget.monthly_budget_minor,
+        daily_budget_minor=budget.daily_budget_minor,
+        updated_at=budget.updated_at,
+    )
 
 
 # --- sync -----------------------------------------------------------------
@@ -315,6 +278,15 @@ def put_budget(body: BudgetIn, user: CurrentUser, db: DbSession) -> BudgetOut:
 @router.post("/sync", response_model=SyncResponse, tags=["sync"])
 def sync(body: SyncRequest, user: CurrentUser, db: DbSession) -> SyncResponse:
     limit = get_settings().sync_max_batch
-    if len(body.transactions) > limit or len(body.categories) > limit:
+    sizes = (
+        len(body.transactions),
+        len(body.categories),
+        len(body.day_budgets),
+        len(body.overruns),
+        len(body.reminders),
+        len(body.reminder_payments),
+        len(body.splits),
+    )
+    if max(sizes) > limit:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"Send at most {limit} rows per sync.")
     return apply_sync(db, user.id, body)

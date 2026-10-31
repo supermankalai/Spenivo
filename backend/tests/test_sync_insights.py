@@ -66,6 +66,7 @@ def test_budget_and_categories_sync(client, alice):
         "counts_as_spending": True,
         "is_archived": False,
         "sort_order": 12,
+        "budget_minor": 600_000,
         "updated_at": 5,
     }
     r = client.post(
@@ -74,6 +75,7 @@ def test_budget_and_categories_sync(client, alice):
         headers=alice,
     ).json()
     assert r["categories"][0]["name"] == "Pets"
+    assert r["categories"][0]["budget_minor"] == 600_000
     assert r["budget"]["monthly_budget_minor"] == 1_500_000
     assert client.get("/api/v1/budgets", headers=alice).json()["monthly_budget_minor"] == 1_500_000
 
@@ -130,3 +132,127 @@ def test_rounding_matches_javascript_math_round():
     assert round_half_up(-5, 2) == -2
     assert round_half_up(-13, 5) == -3
     assert round_half_up(7, 3) == 2
+
+
+def test_daily_budgets_and_overrun_reasons_sync(client, alice):
+    client.post(
+        "/api/v1/sync",
+        json={
+            "cursor": None,
+            "budget": {"monthly_budget_minor": 3_000_000, "daily_budget_minor": 100_000, "updated_at": 5},
+            "day_budgets": [{"day_key": "2026-10-26", "amount_minor": 50_000, "updated_at": 5}],
+            "overruns": [
+                {
+                    "scope": "day",
+                    "period_key": "2026-10-25",
+                    "budget_minor": 100_000,
+                    "spent_minor": 130_000,
+                    "reason_code": "eating_out",
+                    "note": "Birthday",
+                    "created_at": 5,
+                    "updated_at": 5,
+                },
+            ],
+        },
+        headers=alice,
+    )
+
+    other_phone = client.post("/api/v1/sync", json={"cursor": None}, headers=alice).json()
+    assert other_phone["budget"]["daily_budget_minor"] == 100_000
+    assert other_phone["day_budgets"] == [{"day_key": "2026-10-26", "amount_minor": 50_000, "updated_at": 5}]
+    assert other_phone["overruns"][0]["note"] == "Birthday"
+
+    # Removing a day's budget travels as amount null; an older edit loses.
+    client.post(
+        "/api/v1/sync",
+        json={
+            "cursor": other_phone["cursor"],
+            "day_budgets": [{"day_key": "2026-10-26", "amount_minor": None, "updated_at": 9}],
+        },
+        headers=alice,
+    )
+    client.post(
+        "/api/v1/sync",
+        json={"day_budgets": [{"day_key": "2026-10-26", "amount_minor": 70_000, "updated_at": 7}]},
+        headers=alice,
+    )
+    latest = client.post("/api/v1/sync", json={"cursor": other_phone["cursor"]}, headers=alice).json()
+    assert latest["day_budgets"] == [{"day_key": "2026-10-26", "amount_minor": None, "updated_at": 9}]
+
+
+def test_overrun_period_key_must_match_scope(client, alice):
+    bad = {
+        "scope": "month",
+        "period_key": "2026-10-25",
+        "budget_minor": 1,
+        "spent_minor": 2,
+        "reason_code": "other",
+        "created_at": 1,
+        "updated_at": 1,
+    }
+    assert client.post("/api/v1/sync", json={"overruns": [bad]}, headers=alice).status_code == 422
+
+
+def test_emi_reminders_and_paid_months_sync(client, alice, bob):
+    loan = {
+        "id": "rem-1",
+        "kind": "emi",
+        "name": "Car loan",
+        "amount_minor": 1_250_000,
+        "due_day": 5,
+        "category_id": "loans",
+        "start_month": "2026-10",
+        "total_months": 36,
+        "remind_days_before": 1,
+        "times_per_day": 3,
+        "remind_times": "480,840,1290",
+        "snooze": "15m",
+        "created_at": 1,
+        "updated_at": 1,
+    }
+    paid = {
+        "reminder_id": "rem-1",
+        "period_key": "2026-10",
+        "transaction_id": "tx-9",
+        "created_expense": True,
+        "counted": False,
+        "paid_at": 2,
+        "updated_at": 2,
+    }
+    client.post("/api/v1/sync", json={"reminders": [loan], "reminder_payments": [paid]}, headers=alice)
+
+    other_phone = client.post("/api/v1/sync", json={"cursor": None}, headers=alice).json()
+    assert other_phone["reminders"][0]["name"] == "Car loan"
+    assert other_phone["reminders"][0]["times_per_day"] == 3
+    assert other_phone["reminders"][0]["snooze"] == "15m"
+    assert other_phone["reminders"][0]["remind_times"] == "480,840,1290"
+    assert other_phone["reminder_payments"][0]["period_key"] == "2026-10"
+    assert other_phone["reminder_payments"][0]["counted"] is False
+
+    # Undo travels as a tombstone; another user sees nothing.
+    client.post("/api/v1/sync", json={"reminder_payments": [{**paid, "updated_at": 3, "deleted_at": 3}]}, headers=alice)
+    latest = client.post("/api/v1/sync", json={"cursor": other_phone["cursor"]}, headers=alice).json()
+    assert latest["reminder_payments"][0]["deleted_at"] == 3
+    theirs = client.post("/api/v1/sync", json={"cursor": None}, headers=bob).json()
+    assert theirs["reminders"] == [] and theirs["reminder_payments"] == []
+
+
+def test_splits_sync_per_user(client, alice, bob):
+    split = {
+        "id": "sp-1",
+        "transaction_id": "tx-1",
+        "person": "Rahul",
+        "amount_minor": 40_000,
+        "created_at": 1,
+        "updated_at": 1,
+    }
+    client.post("/api/v1/sync", json={"splits": [split]}, headers=alice)
+    other_phone = client.post("/api/v1/sync", json={"cursor": None}, headers=alice).json()
+    assert other_phone["splits"][0]["person"] == "Rahul"
+    assert other_phone["splits"][0]["settled_at"] is None
+
+    # Settling travels as an update; another user sees nothing.
+    client.post("/api/v1/sync", json={"splits": [{**split, "settled_at": 5, "updated_at": 5}]}, headers=alice)
+    latest = client.post("/api/v1/sync", json={"cursor": other_phone["cursor"]}, headers=alice).json()
+    assert latest["splits"][0]["settled_at"] == 5
+    assert client.post("/api/v1/sync", json={"cursor": None}, headers=bob).json()["splits"] == []

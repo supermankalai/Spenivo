@@ -22,17 +22,28 @@ Daily Spend handles financial information, so it collects as little as possible 
 - The app does **not** use an Accessibility Service, does **not** request the SMS permission (it only sees SMS that the SMS app shows as notifications, and cannot read the inbox or past messages), and does not try to bypass Android's permission flow.
 - Turning tracking off in the app stops recording immediately; revoking access in Android Settings stops delivery entirely.
 
-## Cloud sync (optional, off by default)
+## Account & backup (optional, Google sign-in)
 
-Only when the user signs in to a server they choose:
+Only when the user signs in with Google:
 
-- Sent: transactions (amount, category, payee, note, method, time, status, source, source package, reference), categories, monthly budget.
+- The server receives the Google account id (`sub`), name and email from a verified Google ID token. No password exists.
+- Backed up automatically a few seconds after changes: transactions (amount, category, payee, note, method, time, status, source, source package, reference), categories, monthly and daily budgets, per-day budgets, over-budget reasons.
 - Never sent: notification text (it does not exist anywhere to send), the inbox, repost hashes.
-- Passwords are hashed with Argon2id on the server. Tokens are JWTs that expire (30 days by default).
+- Session tokens are the server's own JWTs (30 days by default), kept in Keystore-backed secure storage on the phone.
 - Server logs record method, path, status and timing only — no bodies, query strings, headers or financial values.
 - Every row is stored under the authenticated user's id; one user cannot read or change another's data (covered by `backend/tests/test_isolation.py`).
 
-**Local vs synced:** without sync, deleting the app or using "Delete all local data" removes everything. With sync, a copy also exists on the server until the account's data is deleted there. Account deletion is not implemented yet and must be done by the server operator.
+**Local vs synced:** without sync, deleting the app or using "Delete all local data" removes everything. With an account, a copy also exists on the server until the user deletes the account (Settings › Account & backup › Delete account and backup, `DELETE /api/v1/auth/me`), which removes every synced row.
+
+## App lock
+
+Optional. Uses Android's biometric prompt (fingerprint/face, falling back to the screen-lock PIN/pattern). The app only learns pass/fail. It re-locks after the app has been in the background for more than 30 seconds.
+
+## Pro subscription (optional)
+
+- Google Play handles the payment; the app never sees card, UPI or bank details.
+- The app only asks Google Play whether this Google account has an active Pro subscription, and keeps that yes/no on the phone.
+- Nothing about the subscription is sent to the MyExpenses server.
 
 ## User control
 

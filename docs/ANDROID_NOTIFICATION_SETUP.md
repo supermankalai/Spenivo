@@ -80,8 +80,8 @@ Then open the app (or Settings › Automatic tracking › *Check for detected pa
 Developer shortcut (bypasses the consent screen; **test devices only**):
 
 ```bash
-adb shell cmd notification allow_listener com.dailyspend.app/com.dailyspend.upinotifications.UpiNotificationListenerService
-adb shell cmd notification disallow_listener com.dailyspend.app/com.dailyspend.upinotifications.UpiNotificationListenerService
+adb shell cmd notification allow_listener com.supermankalai.myexpenses/com.dailyspend.upinotifications.UpiNotificationListenerService
+adb shell cmd notification disallow_listener com.supermankalai.myexpenses/com.dailyspend.upinotifications.UpiNotificationListenerService
 ```
 
 Debug reason codes (no content is ever logged):

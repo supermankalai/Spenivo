@@ -1,0 +1,5 @@
+"Usual / Lighter / More" on Today's budget were quick-fill buttons based on your usual daily budget:
+
+Usual: your normal daily budget (for example ₹1,000).
+Lighter: ¾ of it, for a day you want to spend less (₹750).
+More: 1½ times it, for a day you expect to spend more (₹1,500).

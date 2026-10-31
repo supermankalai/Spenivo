@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     cors_origins: list[str] = []
     log_level: str = "INFO"
     sync_max_batch: int = 2000
+    # OAuth client ids whose Google ID tokens are accepted (comma separated). The app's
+    # *Web* client id is the audience of tokens it gets from Google Sign-In on Android.
+    google_client_ids: str = ""
+
+    @property
+    def google_audiences(self) -> list[str]:
+        return [c.strip() for c in self.google_client_ids.split(",") if c.strip()]
 
     @field_validator("database_url")
     @classmethod

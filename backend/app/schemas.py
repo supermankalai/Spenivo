@@ -1,7 +1,6 @@
-import re
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 MAX_AMOUNT_MINOR = 1_000_000_000  # ₹1 crore
 
@@ -17,46 +16,17 @@ EpochMs = Annotated[int, Field(ge=0, le=4_102_444_800_000)]  # epoch millisecond
 # --- auth -----------------------------------------------------------------
 
 
-def normalise_mobile(value: str) -> str:
-    """
-    Indian mobile numbers in any common format → E.164 (+91XXXXXXXXXX).
-    Accepts "98765 43210", "+91-98765-43210", "098765 43210", "919876543210".
-    """
-    digits = re.sub(r"\D", "", value)
-    if len(digits) == 12 and digits.startswith("91"):
-        digits = digits[2:]
-    elif len(digits) == 11 and digits.startswith("0"):
-        digits = digits[1:]
-    if not re.fullmatch(r"[6-9]\d{9}", digits):
-        raise ValueError("Enter a valid 10-digit Indian mobile number.")
-    return "+91" + digits
-
-
-class _MobileIn(BaseModel):
-    mobile: str = Field(min_length=10, max_length=20)
-
-    @field_validator("mobile")
-    @classmethod
-    def _mobile(cls, v: str) -> str:
-        return normalise_mobile(v)
-
-
-class Credentials(_MobileIn):
-    password: str = Field(min_length=8, max_length=128)
-
-
-class LoginRequest(_MobileIn):
-    password: str = Field(min_length=1, max_length=128)
+class GoogleSignInIn(BaseModel):
+    # The ID token from Google Sign-In on the phone (a signed JWT, verified server-side).
+    id_token: str = Field(min_length=20, max_length=4096)
 
 
 class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
-    mobile: str
-
-
-class RegisterOut(UserOut):
-    # Shown to the user once so they can reset a forgotten password; only its hash is stored.
-    recovery_code: str
+    email: str | None
+    name: str | None
 
 
 class TokenOut(BaseModel):
@@ -64,31 +34,10 @@ class TokenOut(BaseModel):
     token_type: Literal["bearer"] = "bearer"
 
 
-RecoveryCode = Field(min_length=16, max_length=40)
-NewPassword = Field(min_length=8, max_length=128)
-
-
-class ResetPasswordIn(_MobileIn):
-    recovery_code: str = RecoveryCode
-    new_password: str = NewPassword
-
-
-class ResetPasswordOut(TokenOut):
-    # The used code is replaced; this new one is shown once.
-    recovery_code: str
-
-
-class ChangePasswordIn(BaseModel):
-    current_password: str = Field(min_length=1, max_length=128)
-    new_password: str = NewPassword
-
-
-class ConfirmPasswordIn(BaseModel):
-    password: str = Field(min_length=1, max_length=128)
-
-
-class RecoveryCodeOut(BaseModel):
-    recovery_code: str
+class SignInOut(TokenOut):
+    user: UserOut
+    # True when this sign-in created the account.
+    created: bool
 
 
 # --- transactions ---------------------------------------------------------
@@ -149,12 +98,18 @@ class TransactionPage(BaseModel):
 # --- budgets & insights ---------------------------------------------------
 
 
+BudgetAmount = Field(default=None, gt=0, le=100 * MAX_AMOUNT_MINOR)
+DayKey = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
+
+
 class BudgetIn(BaseModel):
-    monthly_budget_minor: int | None = Field(default=None, gt=0, le=100 * MAX_AMOUNT_MINOR)
+    monthly_budget_minor: int | None = BudgetAmount
+    daily_budget_minor: int | None = BudgetAmount
 
 
 class BudgetOut(BaseModel):
     monthly_budget_minor: int | None
+    daily_budget_minor: int | None
     updated_at: int
 
 
@@ -198,12 +153,81 @@ class SyncCategory(BaseModel):
     counts_as_spending: bool = True
     is_archived: bool = False
     sort_order: int = 0
+    budget_minor: int | None = Field(default=None, gt=0, le=100 * MAX_AMOUNT_MINOR)
     updated_at: EpochMs
 
 
 class SyncBudget(BaseModel):
-    monthly_budget_minor: int | None = Field(default=None, gt=0, le=100 * MAX_AMOUNT_MINOR)
+    monthly_budget_minor: int | None = BudgetAmount
+    daily_budget_minor: int | None = BudgetAmount
     updated_at: EpochMs
+
+
+class SyncDayBudget(BaseModel):
+    day_key: DayKey
+    # null = the day's override was removed (falls back to the usual daily budget)
+    amount_minor: int | None = BudgetAmount
+    updated_at: EpochMs
+
+
+class SyncOverrun(BaseModel):
+    scope: Literal["day", "month"]
+    period_key: str = Field(pattern=r"^\d{4}-\d{2}(-\d{2})?$")
+    budget_minor: int = Field(ge=0, le=100 * MAX_AMOUNT_MINOR)
+    spent_minor: int = Field(ge=0, le=100 * MAX_AMOUNT_MINOR)
+    reason_code: str = Field(min_length=1, max_length=32, pattern=r"^[a-z_]+$")
+    note: str | None = Field(default=None, max_length=300)
+    created_at: EpochMs
+    updated_at: EpochMs
+
+    @model_validator(mode="after")
+    def _key_matches_scope(self) -> "SyncOverrun":
+        if (len(self.period_key) == 10) != (self.scope == "day"):
+            raise ValueError("period_key must be YYYY-MM-DD for a day and YYYY-MM for a month.")
+        return self
+
+
+MonthKey = Annotated[str, Field(pattern=r"^\d{4}-\d{2}$")]
+
+
+class SyncReminder(BaseModel):
+    id: IdStr
+    kind: Literal["emi", "bill"]
+    name: str = Field(min_length=1, max_length=60)
+    amount_minor: int = Field(gt=0, le=100 * MAX_AMOUNT_MINOR)
+    due_day: int = Field(ge=1, le=31)
+    category_id: str | None = Field(default=None, max_length=64)
+    start_month: MonthKey
+    total_months: int | None = Field(default=None, ge=1, le=480)
+    remind_days_before: int = Field(default=1, ge=0, le=7)
+    times_per_day: int = Field(default=1, ge=1, le=3)
+    remind_times: str = Field(default="", max_length=32, pattern=r"^(\d{1,4}(,\d{1,4}){0,2})?$")
+    snooze: Literal["15m", "1h", "3h", "tomorrow"] = "1h"
+    created_at: EpochMs
+    updated_at: EpochMs
+    deleted_at: EpochMs | None = None
+
+
+class SyncReminderPayment(BaseModel):
+    reminder_id: IdStr
+    period_key: MonthKey
+    transaction_id: IdStr | None = None
+    created_expense: bool = False
+    counted: bool = True
+    paid_at: EpochMs
+    updated_at: EpochMs
+    deleted_at: EpochMs | None = None
+
+
+class SyncSplit(BaseModel):
+    id: IdStr
+    transaction_id: IdStr
+    person: str = Field(min_length=1, max_length=40)
+    amount_minor: int = Field(gt=0, le=MAX_AMOUNT_MINOR)
+    settled_at: EpochMs | None = None
+    created_at: EpochMs
+    updated_at: EpochMs
+    deleted_at: EpochMs | None = None
 
 
 class SyncRequest(BaseModel):
@@ -211,6 +235,11 @@ class SyncRequest(BaseModel):
     transactions: list[SyncTransaction] = []
     categories: list[SyncCategory] = []
     budget: SyncBudget | None = None
+    day_budgets: list[SyncDayBudget] = []
+    overruns: list[SyncOverrun] = []
+    reminders: list[SyncReminder] = []
+    reminder_payments: list[SyncReminderPayment] = []
+    splits: list[SyncSplit] = []
 
 
 class SyncResponse(BaseModel):
@@ -218,3 +247,8 @@ class SyncResponse(BaseModel):
     transactions: list[SyncTransaction]
     categories: list[SyncCategory]
     budget: SyncBudget | None
+    day_budgets: list[SyncDayBudget] = []
+    overruns: list[SyncOverrun] = []
+    reminders: list[SyncReminder] = []
+    reminder_payments: list[SyncReminderPayment] = []
+    splits: list[SyncSplit] = []

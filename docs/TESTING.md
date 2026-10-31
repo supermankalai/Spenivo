@@ -39,7 +39,8 @@ The fixtures are **synthetic**. Passing them does not prove that real bank SMS o
 
 Database created per test by running the Alembic migration.
 
-- `test_auth.py` — register/login, duplicate email, weak input, identical errors for unknown user vs wrong password, missing/garbage/tampered/expired tokens.
+- `test_auth.py` — Google sign-in creates then reuses an account (identity = Google account id, not email), invalid tokens, removed password endpoints, account deletion, missing/garbage/tampered/expired session tokens.
+- `test_google_token.py` — real ID-token checks with a local RSA key: wrong audience/issuer, expired, bad signature, missing subject, unconfigured server.
 - `test_transactions.py` — CRUD, client ids, validation (amount ≤ 0, fractional, enum values, null on PATCH, unknown fields), pagination and filters, budgets.
 - `test_isolation.py` — users cannot list/patch/delete each other's rows, `user_id` in body ignored, same client id per user is separate, sync cannot overwrite or read other users' rows, insights/budget isolation.
 - `test_sync_insights.py` — two devices converge, LWW and stale/tie handling, tombstones, categories/budget sync, sync validation, IST boundaries, summary excludes pending/excluded/transfers/income, same-period comparison, JS-compatible rounding.

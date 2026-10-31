@@ -1,11 +1,13 @@
-from datetime import UTC
+from collections.abc import Callable
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from app.core.security import decode_access_token, token_issued_at
+from app.core.config import get_settings
+from app.core.google import GoogleIdentity, verify_google_id_token
+from app.core.security import decode_access_token
 from app.db import get_db
 from app.models import User
 
@@ -32,15 +34,18 @@ def get_current_user(
     user = db.get(User, user_id)
     if user is None:
         raise unauthorized
-    # A password change or reset signs out every token issued before it.
-    if user.password_changed_at is not None:
-        changed = user.password_changed_at
-        if changed.tzinfo is None:  # SQLite returns naive UTC datetimes
-            changed = changed.replace(tzinfo=UTC)
-        issued = token_issued_at(credentials.credentials)
-        if issued is None or issued < int(changed.timestamp()):
-            raise unauthorized
     return user
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+GoogleVerifier = Callable[[str], GoogleIdentity]
+
+
+def get_google_verifier() -> GoogleVerifier:
+    """Overridden in tests; production checks tokens against Google's published keys."""
+    audiences = get_settings().google_audiences
+    return lambda token: verify_google_id_token(token, audiences)
+
+
+VerifyGoogle = Annotated[GoogleVerifier, Depends(get_google_verifier)]

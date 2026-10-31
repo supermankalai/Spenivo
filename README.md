@@ -72,7 +72,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 API docs at `http://localhost:8000/docs` (disabled when `ENVIRONMENT=production`). See [docs/API.md](docs/API.md).
 
-The account server address is set at build time with `EXPO_PUBLIC_API_URL` in `mobile/.env` (copy `mobile/.env.example`; restart Metro after changing it) and is never shown in the app. Users only enter a username and password — during the first-run steps or later in Settings › Account. For a phone on USB, `adb reverse tcp:8000 tcp:8000` makes `http://localhost:8000` reach the PC; release builds need an `https://` URL.
+The account server address is set at build time with `EXPO_PUBLIC_API_URL` in `mobile/.env` (copy `mobile/.env.example`; restart Metro after changing it) and is never shown in the app. Users sign in with Google (optional) — during the first-run steps or later in Settings › Account & backup. That needs `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` in `mobile/.env` and `GOOGLE_CLIENT_IDS` on the server (see `docs/API.md`). For a phone on USB, `adb reverse tcp:8000 tcp:8000` makes `http://localhost:8000` reach the PC; release builds need an `https://` URL.
 
 ## Checks
 
@@ -95,6 +95,6 @@ See [docs/TESTING.md](docs/TESTING.md) for what each suite covers and the latest
 - English notifications only; amounts must be shown with ₹ / Rs / INR.
 - Bank **SMS** are not read (no SMS permission by design).
 - Date picker uses the device timezone; totals always use IST. Users outside IST may see picked times shifted.
-- Sync uses last-writer-wins on device clocks; badly wrong clocks can lose an edit. No sync conflict UI, no rate limiting or password reset on the backend, no automatic background sync (manual "Sync now").
+- Sync uses last-writer-wins on device clocks; badly wrong clocks can lose an edit. No sync conflict UI, no rate limiting on the backend. Backup runs a few seconds after each change while the app is open (and via "Back up now"), not in the background.
 - Transfers are excluded from spending by default; the rule is per category (Settings → Manage categories).
 - Google Play: apps using `NotificationListenerService` for this purpose may need a declaration and a prominent disclosure. Review current Play policy before publishing.

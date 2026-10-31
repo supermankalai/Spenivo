@@ -11,6 +11,8 @@ from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine, event  # noqa: E402
 
+from app.api.deps import get_google_verifier  # noqa: E402
+from app.core.google import GoogleIdentity, InvalidGoogleToken  # noqa: E402
 from app.db import set_engine  # noqa: E402
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -40,8 +42,10 @@ def client(tmp_path):
 
     from app.main import app
 
+    app.dependency_overrides[get_google_verifier] = lambda: fake_google_verify
     with TestClient(app) as c:
         yield c
+    app.dependency_overrides.clear()
 
     if engine.dialect.name != "sqlite":
         with engine.begin() as conn:
@@ -50,22 +54,32 @@ def client(tmp_path):
     engine.dispose()
 
 
-def auth_headers(client: TestClient, mobile: str, password: str = "correct-horse-battery") -> dict[str, str]:
-    r = client.post("/api/v1/auth/register", json={"mobile": mobile, "password": password})
-    assert r.status_code == 201, r.text
-    r = client.post("/api/v1/auth/login", json={"mobile": mobile, "password": password})
+def fake_google_token(sub: str, email: str | None = None, name: str | None = None) -> str:
+    """Stands in for a Google ID token; real signature checks are in test_google_token.py."""
+    return f"fake-google-token|{sub}|{email or ''}|{name or ''}"
+
+
+def fake_google_verify(token: str) -> GoogleIdentity:
+    parts = token.split("|")
+    if len(parts) != 4 or parts[0] != "fake-google-token":
+        raise InvalidGoogleToken("That Google sign-in didn’t work. Please try again.")
+    return GoogleIdentity(sub=parts[1], email=parts[2] or None, name=parts[3] or None)
+
+
+def auth_headers(client: TestClient, sub: str) -> dict[str, str]:
+    r = client.post("/api/v1/auth/google", json={"id_token": fake_google_token(sub, f"{sub}@gmail.com")})
     assert r.status_code == 200, r.text
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
 @pytest.fixture
 def alice(client):
-    return auth_headers(client, "9876500001")
+    return auth_headers(client, "google-alice-0001")
 
 
 @pytest.fixture
 def bob(client):
-    return auth_headers(client, "9876500002")
+    return auth_headers(client, "google-bob-0002")
 
 
 def make_tx(**overrides):
